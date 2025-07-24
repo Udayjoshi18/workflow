@@ -1,0 +1,802 @@
+import random
+import math
+import json
+from datetime import datetime, timedelta
+
+# =====================================================
+# SIMULATED DATA GENERATOR (Replaces yfinance)
+# =====================================================
+
+class MarketDataSimulator:
+    def __init__(self):
+        """Generate realistic market data without external APIs"""
+        # This list is technically a default, but it's overridden in main()
+        self.symbols = [] 
+        self.market_data = {}
+        
+    def generate_price_series(self, symbol, days=60, start_price=100):
+        """Generate realistic stock price data using random walk"""
+        random.seed(hash(symbol) % 2**32)  # Consistent data for same symbol across runs
+        
+        prices = [start_price]
+        volumes = []
+        dates = []
+        
+        # Generate dates
+        current_date = datetime.now() - timedelta(days=days)
+        for i in range(days):
+            dates.append(current_date + timedelta(days=i))
+        
+        # Generate price movements
+        # Adjusted trend for slight general upward bias (more common in long run for tech stocks)
+        trend = random.uniform(0.0000, 0.001)  # Slightly positive overall trend
+        volatility = random.uniform(0.01, 0.025)  # Daily volatility
+        
+        for i in range(1, days):
+            # Random walk with trend and mean reversion
+            daily_return = random.gauss(trend, volatility)
+            
+            # Add some mean reversion (pulls price back towards a recent average)
+            if len(prices) > 10:
+                recent_change = (prices[-1] / prices[-10]) - 1
+                if recent_change > 0.05:  # If up >5%, add downward pressure
+                    daily_return -= 0.001
+                elif recent_change < -0.05:  # If down >5%, add upward pressure
+                    daily_return += 0.001
+            
+            new_price = prices[-1] * (1 + daily_return)
+            prices.append(max(new_price, 1))  # Minimum price of $1 to prevent zero/negative prices
+            
+            # Generate volume (inverse correlation with price change)
+            base_volume = 1000000 + random.randint(-200000, 500000)
+            volume_multiplier = 1 + abs(daily_return) * 10  # Higher volume on big moves
+            volumes.append(int(base_volume * volume_multiplier))
+        
+        return {
+            'dates': dates,
+            'open': [p * random.uniform(0.99, 1.01) for p in prices],
+            'high': [p * random.uniform(1.001, 1.03) for p in prices],
+            'low': [p * random.uniform(0.97, 0.999) for p in prices],
+            'close': prices,
+            'volume': volumes
+        }
+        
+    def get_market_data(self, symbols):
+        """Generate market data for all symbols with more 'realistic' starting points"""
+        # Manually curated starting prices for a selection of 98 well-known companies
+        start_prices = {
+            # Tech/Growth (approx. current prices)
+            'AAPL': 210, 'MSFT': 450, 'GOOGL': 180, 'AMZN': 190, 'NVDA': 1200, 
+            'META': 500, 'TSLA': 195, 'ADBE': 530, 'CRM': 240, 'NFLX': 680,
+            'INTC': 30, 'CSCO': 50, 'IBM': 180, 'ORCL': 140, 'AMD': 160,
+            'QCOM': 190, 'AVGO': 1600, 'ADSK': 220, # Autodesk
+            'PLTR': 25, 'SNPS': 600, 'CDNS': 300, # Synopsys, Cadence Design Systems
+
+            # Finance (approx. current prices)
+            'JPM': 200, 'V': 280, 'MA': 460, 'BAC': 40, 'WFC': 60,
+            'GS': 450, 'AXP': 240, 'MS': 100, 'C': 100, # Citigroup (often just 'C')
+            'BRK.B': 400, 'BK': 40, 'SCHW': 70, 'BLK': 900, 'AON': 340, 
+            'MMC': 200, 'SPGI': 450, 'COF': 140, # Capital One Financial
+
+            # Consumer Goods/Retail (approx. current prices)
+            'WMT': 70, 'PG': 160, 'KO': 65, 'PEP': 190, 'COST': 850,
+            'HD': 350, 'MCD': 270, 'NKE': 100, 'SBUX': 90, 'PM': 100,
+            'CMG': 3200, 'TJX': 90, 'DG': 130, 'ULTA': 400, # Chipotle, TJX, Dollar General, Ulta Beauty
+            'LULU': 350, 'CL': 80, # Lululemon, Colgate-Palmolive
+
+            # Healthcare/Pharma/Devices (approx. current prices)
+            'JNJ': 150, 'LLY': 850, 'MRK': 130, 'PFE': 28, 'ABBV': 170,
+            'UNH': 520, 'AMGN': 310, 'TMO': 600, 'DHR': 260, 'MDT': 80,
+            'ABT': 105, 'BMY': 45, 'GILD': 70, 'REGN': 900, 'ISRG': 400, 
+            'ZTS': 170, 'ELV': 500, 'CVS': 60, # Bristol-Myers, Gilead, Regeneron, Intuitive Surgical, Zoetis, Elevance Health, CVS Health
+
+            # Industrials/Energy/Telecom/Other (approx. current prices)
+            'XOM': 110, 'CVX': 150, 'BA': 180, 'HON': 220, 'T': 18,
+            'VZ': 40, 'CAT': 320, 'GE': 170, 'RTX': 110, 'LMT': 450, # RTX is Raytheon, LMT is Lockheed Martin
+            'TSM': 170, 'SAP': 190, 'ASML': 950, # Taiwan Semi, SAP, ASML
+            'LVMUY': 150, 'NVO': 150, # LVMH (ADR), Novo Nordisk (ADR)
+            'DIS': 110, 'UPS': 150, 'NOC': 450, # Disney, UPS, Northrop Grumman
+            'GD': 280, 'DE': 380, 'EMR': 100, 'PH': 600, # General Dynamics, Deere, Emerson Electric, Parker-Hannifin
+            'ITW': 240, 'ETN': 320, 'EOG': 140, 'SO': 80, 'NEE': 70, # Illinois Tool Works, Eaton, EOG Resources, Southern Co, NextEra Energy
+            'PLD': 120, 'EQIX': 700, 'WELL': 100, 'APD': 250, # Prologis, Equinix, Welltower, Air Products
+            'ALB': 100, 'SHW': 300, 'CMCSA': 40, # Albemarle, Sherwin-Williams, Comcast
+            'WDAY': 200, 'ABNB': 150, 'COIN': 70 # Workday, Airbnb, Coinbase
+        }
+        
+        data = {}
+        for symbol in symbols:
+            start_price = start_prices.get(symbol, 100) # Fallback to 100 if symbol not in map
+            data[symbol] = self.generate_price_series(symbol, start_price=start_price)
+            
+        self.market_data = data
+        return data
+
+# =====================================================
+# TECHNICAL ANALYSIS ENGINE (No external libraries)
+# =====================================================
+
+class TechnicalAnalyzer:
+    def __init__(self):
+        """Technical analysis using only built-in functions"""
+        pass
+    
+    def simple_moving_average(self, prices, period):
+        """Calculate Simple Moving Average"""
+        if len(prices) < period:
+            return [None] * len(prices)
+        
+        sma = []
+        for i in range(len(prices)):
+            if i < period - 1:
+                sma.append(None)
+            else:
+                avg = sum(prices[i-period+1:i+1]) / period
+                sma.append(avg)
+        
+        return sma
+    
+    def exponential_moving_average(self, prices, period):
+        """Calculate Exponential Moving Average"""
+        if not prices:
+            return []
+        
+        multiplier = 2 / (period + 1)
+        # Ensure initial EMA calculation is stable, especially for short periods
+        if len(prices) < period:
+            ema = self.simple_moving_average(prices, len(prices)) # Use SMA for initial values if not enough data
+            return ema
+        else:
+            # Calculate initial SMA for the first EMA point if enough data
+            initial_sma = sum(prices[:period]) / period
+            ema = [initial_sma]
+        
+        for i in range(period, len(prices)):
+            ema_value = (prices[i] * multiplier) + (ema[-1] * (1 - multiplier))
+            ema.append(ema_value)
+        
+        # Pad with None for the initial period if needed (for consistent length)
+        return [None] * (period - 1) + ema
+    
+    def rsi(self, prices, period=14):
+        """Calculate Relative Strength Index"""
+        if len(prices) < period + 1:
+            return [50] * len(prices)  # Default RSI for insufficient data
+        
+        changes = []
+        for i in range(1, len(prices)):
+            changes.append(prices[i] - prices[i-1])
+        
+        gains = [max(change, 0) for change in changes]
+        losses = [abs(min(change, 0)) for change in changes]
+        
+        rsi_values = [None] * period # Initialize with None for the warm-up period
+        
+        # Calculate first average gain and loss for the initial period
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+        
+        # Calculate the first RSI value
+        if avg_loss == 0:
+            rsi_values.append(100)
+        else:
+            rs = avg_gain / avg_loss
+            rsi_values.append(100 - (100 / (1 + rs)))
+        
+        # Calculate subsequent RSI values
+        for i in range(period, len(changes)):
+            avg_gain = ((avg_gain * (period - 1)) + gains[i]) / period
+            avg_loss = ((avg_loss * (period - 1)) + losses[i]) / period
+            
+            if avg_loss == 0:
+                rsi_values.append(100)
+            else:
+                rs = avg_gain / avg_loss
+                rsi = 100 - (100 / (1 + rs))
+                rsi_values.append(rsi)
+                
+        # Fill any remaining leading Nones (if len(prices) was just enough for period+1)
+        while len(rsi_values) < len(prices):
+            rsi_values.insert(0, None) # Insert at the beginning to maintain alignment
+            
+        return rsi_values
+
+    def macd(self, prices, fast=12, slow=26, signal=9):
+        """Calculate MACD (Moving Average Convergence Divergence)"""
+        # Ensure enough data for both EMAs
+        if len(prices) < slow: # Need at least 'slow' period data for first real EMA
+            return [None] * len(prices), [None] * len(prices) # Return lists of Nones
+            
+        ema_fast = self.exponential_moving_average(prices, fast)
+        ema_slow = self.exponential_moving_average(prices, slow)
+        
+        macd_line = []
+        for i in range(len(prices)):
+            if ema_fast[i] is not None and ema_slow[i] is not None:
+                macd_line.append(ema_fast[i] - ema_slow[i])
+            else:
+                macd_line.append(None) # Keep None if EMA is None
+        
+        # Calculate signal line only after MACD line has valid data
+        # Filter out None values from macd_line before calculating signal_line EMA
+        signal_line = self.exponential_moving_average(
+            [m for m in macd_line if m is not None], signal
+        )
+        
+        # Pad signal_line with Nones to match macd_line length
+        num_nones_for_signal = len(macd_line) - len(signal_line)
+        signal_line_padded = [None] * num_nones_for_signal + signal_line
+
+        return macd_line, signal_line_padded
+    
+    def bollinger_bands(self, prices, period=20, std_dev=2):
+        """Calculate Bollinger Bands"""
+        sma = self.simple_moving_average(prices, period)
+        
+        upper_band = []
+        lower_band = []
+        
+        for i in range(len(prices)):
+            if i < period - 1:
+                upper_band.append(None)
+                lower_band.append(None)
+            else:
+                # Calculate standard deviation over the period
+                subset = prices[i-period+1:i+1]
+                mean = sma[i]
+                
+                # Handle case where mean might be None if SMA couldn't be calculated
+                if mean is None:
+                    upper_band.append(None)
+                    lower_band.append(None)
+                    continue
+
+                variance = sum((x - mean) ** 2 for x in subset) / period
+                std = math.sqrt(variance)
+                
+                upper_band.append(mean + (std * std_dev))
+                lower_band.append(mean - (std * std_dev))
+        
+        return sma, upper_band, lower_band
+
+# =====================================================
+# NEWS SENTIMENT SIMULATOR (Replaces TextBlob/NLP)
+# =====================================================
+
+class NewsSentimentSimulator:
+    def __init__(self):
+        """Simulate news sentiment without NLP libraries"""
+        self.news_templates = {
+            'positive': [
+                "{} reports strong quarterly earnings",
+                "{} announces major product launch",
+                "{} stock upgraded by analysts",
+                "{} sees increased institutional buying",
+                "{} partnership announced with tech giant"
+            ],
+            'negative': [
+                "{} faces regulatory investigation",
+                "{} reports disappointing earnings",
+                "{} stock downgraded by analysts",
+                "{} CEO announces unexpected departure",
+                "{} faces supply chain disruptions"
+            ],
+            'neutral': [
+                "{} maintains steady market position",
+                "{} announces regular dividend payment",
+                "{} reports mixed quarterly results",
+                "{} stock shows sideways movement",
+                "{} maintains guidance for next quarter"
+            ]
+        }
+    
+    def generate_news_sentiment(self, symbols):
+        """Generate simulated news sentiment"""
+        news_data = []
+        
+        for symbol in symbols:
+            # Generate random sentiment with some persistence based on current day
+            random.seed(hash(symbol + str(datetime.now().day)) % 2**32)
+            
+            sentiment_type = random.choices(
+                ['positive', 'negative', 'neutral'],
+                weights=[0.3, 0.3, 0.4]  # Slightly more neutral news
+            )[0]
+            
+            template = random.choice(self.news_templates[sentiment_type])
+            headline = template.format(symbol)
+            
+            # Convert to numerical sentiment score
+            sentiment_scores = {
+                'positive': random.uniform(0.1, 0.8),
+                'negative': random.uniform(-0.8, -0.1),
+                'neutral': random.uniform(-0.1, 0.1)
+            }
+            
+            news_data.append({
+                'symbol': symbol,
+                'headline': headline,
+                'sentiment': sentiment_type,
+                'sentiment_score': sentiment_scores[sentiment_type],
+                'impact_score': abs(sentiment_scores[sentiment_type]) * random.uniform(0.5, 1.5)
+            })
+            
+        return news_data
+
+# =====================================================
+# BEHAVIORAL PSYCHOLOGY ANALYZER
+# =====================================================
+
+class BehavioralAnalyzer:
+    def __init__(self):
+        """Analyze investor psychology patterns"""
+        pass
+    
+    def calculate_fear_greed_index(self, prices, volumes):
+        """Calculate Fear & Greed Index"""
+        if len(prices) < 20 or len(volumes) < 20: # Need enough data for calculations
+            return 50  # Neutral if not enough data
+        
+        # Price momentum component
+        # Ensure we have enough data for the 10-day lookback
+        if len(prices) < 10:
+            momentum_score = 50
+        else:
+            recent_return = (prices[-1] / prices[-10] - 1) * 100
+            momentum_score = max(min(recent_return * 2 + 50, 100), 0)
+        
+        # Volatility component (fear indicator)
+        # Ensure we have enough data for returns and lookback period
+        if len(prices) < 2:
+            volatility_score = 50
+        else:
+            returns = [(prices[i]/prices[i-1] - 1) for i in range(1, len(prices))]
+            # Ensure enough returns for the 20-day volatility calculation
+            if len(returns) < 20:
+                volatility_score = 50
+            else:
+                volatility = math.sqrt(sum(r**2 for r in returns[-20:]) / 20) * math.sqrt(252)
+                volatility_score = max(min(100 - volatility * 200, 100), 0)
+        
+        # Volume component (participation indicator)
+        # Ensure enough data for 20-day average volume
+        if len(volumes) < 20:
+            volume_score = 50
+        else:
+            avg_volume = sum(volumes[-20:]) / 20
+            recent_volume = sum(volumes[-5:]) / 5
+            volume_ratio = recent_volume / avg_volume if avg_volume > 0 else 1
+            volume_score = max(min(volume_ratio * 30 + 35, 100), 0)
+        
+        # Combined Fear & Greed Index with weighting
+        fear_greed = (momentum_score * 0.4 + volatility_score * 0.3 + volume_score * 0.3)
+        
+        return fear_greed
+    
+    def detect_behavioral_patterns(self, prices, volumes):
+        """Detect behavioral patterns in market data"""
+        patterns = []
+        
+        if len(prices) < 20 or len(volumes) < 20:
+            return patterns # Not enough data to detect patterns
+        
+        # Detect momentum chasing (greed) - requires at least 10 days of data for recent_gains
+        if len(prices) >= 10:
+            recent_gains = sum(1 for i in range(len(prices) - 10, len(prices) - 1) if prices[i] > prices[i-1])
+            if recent_gains >= 8: # 8 out of last 9 days were gains
+                patterns.append("momentum_chasing")
+        
+        # Detect panic selling (fear) - requires at least 5 days of data for recent_losses
+        if len(prices) >= 5 and len(volumes) >= 20: # volumes also need 20 for avg_volume
+            recent_losses = sum(1 for i in range(len(prices) - 5, len(prices) - 1) if prices[i] < prices[i-1])
+            avg_volume_long = sum(volumes[-20:]) / 20
+            volume_spike = max(volumes[-5:]) > avg_volume_long * 2 # Recent volume spike
+            if recent_losses >= 4 and volume_spike: # 4 out of last 5 days were losses with a volume spike
+                patterns.append("panic_selling")
+        
+        # Detect consolidation (uncertainty) - requires at least 10 days of data
+        if len(prices) >= 10:
+            price_range = max(prices[-10:]) - min(prices[-10:])
+            avg_price = sum(prices[-10:]) / 10
+            if avg_price > 0 and (price_range / avg_price < 0.03):  # Less than 3% range (tighter consolidation)
+                patterns.append("consolidation")
+        
+        return patterns
+
+# =====================================================
+# COMPLETE TRADING SYSTEM
+# =====================================================
+
+class WebCompatibleTradingSystem:
+    def __init__(self, initial_capital=100000):
+        """Complete trading system for web compilers"""
+        self.initial_capital = initial_capital
+        self.market_sim = MarketDataSimulator()
+        self.tech_analyzer = TechnicalAnalyzer()
+        self.news_sim = NewsSentimentSimulator()
+        self.behavioral_analyzer = BehavioralAnalyzer()
+        
+        # Trading parameters
+        self.symbols = [] # This will be populated by main function
+        self.risk_params = {
+            'max_position_size': 0.15,  # 15% max per position
+            'stop_loss_pct': 0.08,      # 8% stop loss
+            'take_profit_pct': 0.15,    # 15% take profit
+        }
+    
+    def analyze_stock(self, symbol, data):
+        """Comprehensive analysis of a single stock"""
+        prices = data['close']
+        volumes = data['volume']
+        
+        # Ensure enough data points for analysis
+        # Using 60 days as the default simulation length, 50 is fine for most indicators
+        if len(prices) < 50: 
+            return {
+                'symbol': symbol,
+                'current_price': prices[-1] if prices else 0,
+                'recommendation': "INSUFFICIENT DATA",
+                'confidence': 0,
+                'signal_strength': 0,
+                'signals': ["Not enough historical data for full analysis"],
+                'technical': {},
+                'behavioral': {}
+            }
+
+        # Technical Analysis
+        sma_20 = self.tech_analyzer.simple_moving_average(prices, 20)
+        sma_50 = self.tech_analyzer.simple_moving_average(prices, 50)
+        rsi = self.tech_analyzer.rsi(prices)
+        macd, macd_signal = self.tech_analyzer.macd(prices)
+        bb_middle, bb_upper, bb_lower = self.tech_analyzer.bollinger_bands(prices)
+        
+        # Current values (most recent) - provide sensible defaults if None from calculations
+        current_price = prices[-1]
+        current_rsi = rsi[-1] if rsi and rsi[-1] is not None else 50 
+        current_sma_20 = sma_20[-1] if sma_20 and sma_20[-1] is not None else current_price
+        current_sma_50 = sma_50[-1] if sma_50 and sma_50[-1] is not None else current_price
+        current_macd = macd[-1] if macd and macd[-1] is not None else 0
+        current_macd_signal = macd_signal[-1] if macd_signal and macd_signal[-1] is not None else 0
+        current_bb_upper = bb_upper[-1] if bb_upper and bb_upper[-1] is not None else current_price * 1.02
+        current_bb_lower = bb_lower[-1] if bb_lower and bb_lower[-1] is not None else current_price * 0.98
+        
+        # Behavioral Analysis
+        fear_greed_index = self.behavioral_analyzer.calculate_fear_greed_index(prices, volumes)
+        behavioral_patterns = self.behavioral_analyzer.detect_behavioral_patterns(prices, volumes)
+        
+        # Signal Generation
+        signals = []
+        signal_strength = 0
+        
+        # RSI Signals
+        if current_rsi < 30:
+            signals.append("RSI Oversold (Buy)")
+            signal_strength += 2
+        elif current_rsi > 70:
+            signals.append("RSI Overbought (Sell)")
+            signal_strength -= 2
+        
+        # Moving Average Signals (Golden/Death Cross or price relative to MAs)
+        if current_sma_20 > 0 and current_sma_50 > 0: # Ensure MAs are valid numbers
+            if current_price > current_sma_20 and current_sma_20 > current_sma_50:
+                signals.append("Bullish MA Trend (Price > SMA20 > SMA50)")
+                signal_strength += 1
+            elif current_price < current_sma_20 and current_sma_20 < current_sma_50:
+                signals.append("Bearish MA Trend (Price < SMA20 < SMA50)")
+                signal_strength -= 1
+        
+        # MACD Signals (Crossover)
+        # Ensure sufficient historical data for MACD crossover detection
+        if current_macd is not None and current_macd_signal is not None and len(macd) >= 2 and len(macd_signal) >= 2:
+            # Check for MACD line crossing above signal line (bullish)
+            if current_macd > current_macd_signal and macd[-2] < macd_signal[-2]:
+                signals.append("MACD Bullish Crossover")
+                signal_strength += 2
+            # Check for MACD line crossing below signal line (bearish)
+            elif current_macd < current_macd_signal and macd[-2] > macd_signal[-2]:
+                signals.append("MACD Bearish Crossover")
+                signal_strength -= 2
+            elif current_macd > current_macd_signal: # Not a crossover, but still bullish alignment
+                signals.append("MACD Bullish (Above Signal)")
+                signal_strength += 1
+            else: # Not a crossover, but still bearish alignment
+                signals.append("MACD Bearish (Below Signal)")
+                signal_strength -= 1
+        
+        # Bollinger Band Signals
+        if current_price < current_bb_lower:
+            signals.append("Below BB Lower (Potential Oversold Reversal)")
+            signal_strength += 1
+        elif current_price > current_bb_upper:
+            signals.append("Above BB Upper (Potential Overbought Reversal)")
+            signal_strength -= 1
+        
+        # Behavioral adjustments
+        if fear_greed_index < 25:  # Extreme fear - contrarian buy signal
+            signals.append("Market Fear - Contrarian Buy Opportunity")
+            signal_strength += 1
+        elif fear_greed_index > 75:  # Extreme greed - contrarian sell signal
+            signals.append("Market Greed - Contrarian Sell Warning")
+            signal_strength -= 1
+        
+        # Final recommendation logic
+        recommendation = "HOLD"
+        confidence = 50
+        
+        if signal_strength >= 3:
+            recommendation = "STRONG BUY"
+            confidence = min(signal_strength * 10 + 60, 95) # Scale confidence up
+        elif signal_strength > 0:
+            recommendation = "BUY"
+            confidence = min(signal_strength * 15 + 40, 85)
+        elif signal_strength <= -3:
+            recommendation = "STRONG SELL"
+            confidence = min(abs(signal_strength) * 10 + 60, 95)
+        elif signal_strength < 0:
+            recommendation = "SELL"
+            confidence = min(abs(signal_strength) * 15 + 40, 85)
+            
+        return {
+            'symbol': symbol,
+            'current_price': current_price,
+            'recommendation': recommendation,
+            'confidence': confidence,
+            'signal_strength': signal_strength,
+            'signals': signals,
+            'technical': {
+                'rsi': current_rsi,
+                'sma_20': current_sma_20,
+                'sma_50': current_sma_50,
+                'macd': current_macd,
+                'macd_signal': current_macd_signal, # Include signal for context
+                'bb_position': 'lower' if current_price < current_bb_lower else 'upper' if current_price > current_bb_upper else 'middle'
+            },
+            'behavioral': {
+                'fear_greed_index': fear_greed_index,
+                'patterns': behavioral_patterns
+            }
+        }
+    
+    def calculate_position_size(self, confidence, current_price):
+        """Calculate position size based on confidence and risk management"""
+        # Base position size on confidence, ensuring at least some allocation for higher confidence
+        confidence_factor = confidence / 100.0
+        # Ensure a minimum factor even for lower confidence for calculation purposes if desired
+        base_position_pct = self.risk_params['max_position_size'] * confidence_factor
+        
+        # Calculate shares
+        position_value = self.initial_capital * base_position_pct
+        shares = int(position_value / current_price) if current_price > 0 else 0
+        actual_value = shares * current_price
+        
+        # Risk management levels
+        stop_loss = current_price * (1 - self.risk_params['stop_loss_pct'])
+        take_profit = current_price * (1 + self.risk_params['take_profit_pct'])
+        max_loss = (current_price - stop_loss) * shares
+        max_gain = (take_profit - current_price) * shares
+        
+        return {
+            'shares': shares,
+            'position_value': actual_value,
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
+            'max_loss': max_loss,
+            'max_gain': max_gain,
+            'risk_reward_ratio': max_gain / max_loss if max_loss > 0 else 0
+        }
+    
+    def run_complete_analysis(self):
+        """Run complete trading system analysis"""
+        print("🚀 AI Trading System Analysis Starting...")
+        print("=" * 60)
+        
+        # Get market data
+        print("📊 Generating market data...")
+        market_data = self.market_sim.get_market_data(self.symbols)
+        
+        # Get news sentiment
+        print("📰 Analyzing news sentiment...")
+        news_data = self.news_sim.generate_news_sentiment(self.symbols)
+        
+        # Analyze each stock
+        print("🔍 Analyzing stocks...")
+        analyses = []
+        total_investment = 0
+        
+        for symbol in self.symbols:
+            if symbol in market_data:
+                analysis = self.analyze_stock(symbol, market_data[symbol])
+                
+                # Add news sentiment (only if analysis isn't 'INSUFFICIENT DATA')
+                if analysis['recommendation'] != "INSUFFICIENT DATA":
+                    symbol_news = [n for n in news_data if n['symbol'] == symbol]
+                    if symbol_news:
+                        news_impact = symbol_news[0]['sentiment_score']
+                        analysis['news_sentiment'] = symbol_news[0]['sentiment']
+                        analysis['news_headline'] = symbol_news[0]['headline']
+                        
+                        # Adjust confidence based on news for relevant recommendations
+                        if news_impact > 0.3 and analysis['recommendation'] in ['BUY', 'STRONG BUY']:
+                            analysis['confidence'] = min(analysis['confidence'] + 10, 95)
+                        elif news_impact < -0.3 and analysis['recommendation'] in ['SELL', 'STRONG SELL']:
+                            analysis['confidence'] = min(analysis['confidence'] + 10, 95)
+                
+                # Calculate position size for buy/sell recommendations (only if not 'INSUFFICIENT DATA')
+                if analysis['recommendation'] in ['BUY', 'STRONG BUY', 'SELL', 'STRONG SELL']:
+                    position_info = self.calculate_position_size(
+                        analysis['confidence'], 
+                        analysis['current_price']
+                    )
+                    analysis['position'] = position_info
+                    total_investment += position_info['position_value']
+                    
+                analyses.append(analysis)
+        
+        # Display results
+        self.display_results(analyses, total_investment)
+        
+        return analyses
+    
+    def display_results(self, analyses, total_investment):
+        """Display comprehensive analysis results"""
+        print("\n" + "=" * 70)
+        print("🎯 COMPREHENSIVE TRADING RECOMMENDATIONS")
+        print("=" * 70)
+        
+        buy_recommendations = []
+        sell_recommendations = []
+        hold_recommendations = []
+        insufficient_data_recommendations = []
+        
+        for analysis in analyses:
+            if analysis['recommendation'] in ['BUY', 'STRONG BUY']:
+                buy_recommendations.append(analysis)
+            elif analysis['recommendation'] in ['SELL', 'STRONG SELL']:
+                sell_recommendations.append(analysis)
+            elif analysis['recommendation'] == "INSUFFICIENT DATA":
+                insufficient_data_recommendations.append(analysis)
+            else: # Covers HOLD and any other default
+                hold_recommendations.append(analysis)
+        
+        # Display buy recommendations
+        if buy_recommendations:
+            print("\n🟢 BUY RECOMMENDATIONS")
+            print("-" * 50)
+            for analysis in sorted(buy_recommendations, key=lambda x: x['confidence'], reverse=True):
+                self.display_stock_analysis(analysis)
+        
+        # Display sell recommendations
+        if sell_recommendations:
+            print("\n🔴 SELL RECOMMENDATIONS")
+            print("-" * 50)
+            for analysis in sorted(sell_recommendations, key=lambda x: x['confidence'], reverse=True):
+                self.display_stock_analysis(analysis)
+        
+        # Display hold recommendations
+        if hold_recommendations:
+            print("\n🟡 HOLD RECOMMENDATIONS")
+            print("-" * 50)
+            for analysis in hold_recommendations[:3]:  # Show top 3 holds for brevity
+                self.display_stock_analysis(analysis, show_position=False)
+
+        # Display insufficient data warnings
+        if insufficient_data_recommendations:
+            print("\n⚠️ STOCKS WITH INSUFFICIENT DATA FOR FULL ANALYSIS")
+            print("-" * 70)
+            for analysis in insufficient_data_recommendations:
+                print(f"📈 {analysis['symbol']} - Current Price: ${analysis['current_price']:.2f}")
+                print(f"    Warning: {analysis['signals'][0]}")
+                print("-" * 70)
+
+        # Portfolio summary
+        print("\n" + "=" * 70)
+        print("💼 PORTFOLIO SUMMARY")
+        print("=" * 70)
+        print(f"Initial Capital: ${self.initial_capital:,}")
+        print(f"Total Investment: ${total_investment:,.2f}")
+        print(f"Remaining Cash: ${self.initial_capital - total_investment:,.2f}")
+        # Prevent division by zero if initial_capital is 0
+        print(f"Portfolio Utilization: {(total_investment/self.initial_capital)*100:.1f}%" if self.initial_capital > 0 else "N/A")
+        
+        active_positions = len([a for a in analyses if 'position' in a and a['recommendation'] in ['BUY', 'STRONG BUY', 'SELL', 'STRONG SELL']])
+        print(f"Active Positions: {active_positions}")
+        
+        if active_positions > 0:
+            total_max_loss = sum(a['position']['max_loss'] for a in analyses if 'position' in a)
+            total_max_gain = sum(a['position']['max_gain'] for a in analyses if 'position' in a)
+            print(f"Total Max Loss (potential): ${total_max_loss:,.2f}")
+            print(f"Total Max Gain (potential): ${total_max_gain:,.2f}")
+            print(f"Portfolio Risk/Reward: {total_max_gain/total_max_loss:.2f}" if total_max_loss > 0 else "N/A")
+    
+    def display_stock_analysis(self, analysis, show_position=True):
+        """Display individual stock analysis"""
+        print(f"\n📈 {analysis['symbol']} - Current Price: ${analysis['current_price']:.2f}")
+        print(f"    Recommendation: {analysis['recommendation']} ({analysis['confidence']:.0f}% confidence)")
+        
+        if 'news_sentiment' in analysis:
+            print(f"    News: {analysis['news_sentiment'].title()} - {analysis['news_headline']}")
+        
+        # Only display technical/behavioral if data is sufficient
+        if analysis['recommendation'] != "INSUFFICIENT DATA":
+            print(f"    Technical: RSI={analysis['technical']['rsi']:.0f}, "
+                  f"SMA20=${analysis['technical']['sma_20']:.2f}, "
+                  f"SMA50=${analysis['technical']['sma_50']:.2f}, " # Display SMA50
+                  f"BB={analysis['technical']['bb_position']}")
+            print(f"    Behavioral: Fear/Greed={analysis['behavioral']['fear_greed_index']:.0f}")
+            
+            if analysis['behavioral']['patterns']:
+                print(f"    Patterns: {', '.join(analysis['behavioral']['patterns'])}")
+            
+            print(f"    Signals: {', '.join(analysis['signals'][:3])}...")  # Show first 3 signals
+        
+        if show_position and 'position' in analysis:
+            pos = analysis['position']
+            print(f"    Position: {pos['shares']} shares (${pos['position_value']:,.2f})")
+            print(f"    Stop Loss: ${pos['stop_loss']:.2f} | Take Profit: ${pos['take_profit']:.2f}")
+            print(f"    Risk/Reward: {pos['risk_reward_ratio']:.2f}")
+
+# =====================================================
+# MAIN EXECUTION
+# =====================================================
+
+def main():
+    """Main function to run the trading system"""
+    random.seed(42) # Set a fixed seed for reproducible results across runs
+
+    print("🎉 Welcome to the AI Trading System!")
+    print("✅ Compatible with web compilers (no external packages needed)")
+    print("🔄 Using simulated market data and advanced algorithms\n")
+    
+    # Initialize trading system
+    trading_system = WebCompatibleTradingSystem(initial_capital=100000)
+    
+    # Customizing symbols to include a broad list of top companies (total 98 symbols)
+    trading_system.symbols = [
+        # Tech/Growth
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'ADBE', 'CRM', 'NFLX',
+        'INTC', 'CSCO', 'IBM', 'ORCL', 'AMD', 'QCOM', 'AVGO', 'ADSK', 'PLTR', 'SNPS', 
+        'CDNS', 
+
+        # Finance
+        'JPM', 'V', 'MA', 'BAC', 'WFC', 'GS', 'AXP', 'MS', 'C', 'BRK.B', 
+        'BK', 'SCHW', 'BLK', 'AON', 'MMC', 'SPGI', 'COF', 
+
+        # Consumer Goods/Retail
+        'WMT', 'PG', 'KO', 'PEP', 'COST', 'HD', 'MCD', 'NKE', 'SBUX', 'PM',
+        'CMG', 'TJX', 'DG', 'ULTA', 'LULU', 'CL', 
+
+        # Healthcare/Pharma/Devices
+        'JNJ', 'LLY', 'MRK', 'PFE', 'ABBV', 'UNH', 'AMGN', 'TMO', 'DHR', 'MDT',
+        'ABT', 'BMY', 'GILD', 'REGN', 'ISRG', 'ZTS', 'ELV', 'CVS', 
+
+        # Industrials/Energy/Telecom/Other
+        'XOM', 'CVX', 'BA', 'HON', 'T', 'VZ', 'CAT', 'GE', 'RTX', 'LMT',
+        'TSM', 'SAP', 'ASML', 'LVMUY', 'NVO', 'DIS', 'UPS', 'NOC', 'GD', 'DE',
+        'EMR', 'PH', 'ITW', 'ETN', 'EOG', 'SO', 'NEE', 'PLD', 'EQIX', 'WELL',
+        'APD', 'ALB', 'SHW', 'CMCSA', 'WDAY', 'ABNB', 'COIN'
+    ]
+    
+    print(f"Attempting to analyze {len(trading_system.symbols)} simulated stocks.")
+
+    # Run complete analysis
+    results = trading_system.run_complete_analysis()
+    
+    print("\n✅ Analysis Complete!")
+    print("\n📋 Summary:")
+    print(f"    • Analyzed {len(trading_system.symbols)} stocks")
+    print(f"    • Generated {len(results)} recommendations")
+    print(f"    • Used advanced technical analysis")
+    print(f"    • Incorporated behavioral psychology")
+    print(f"    • Applied risk management")
+    
+    print("\n🔗 Next Steps:")
+    print("    1. Review recommendations above")
+    print("    2. Consider your risk tolerance")
+    print("    3. Implement paper trading first (simulate trades without real money)")
+    print("    4. Monitor and adjust strategies based on simulated outcomes")
+    
+    return results
+
+# Run the system
+if __name__ == "__main__":
+    results = main()
+
